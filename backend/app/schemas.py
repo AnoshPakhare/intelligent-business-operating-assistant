@@ -89,4 +89,17 @@ class InvoiceDetailResponse(InvoiceResponse):
     customer: dict
     items: list[InvoiceItemResponse]
 
+
+class ExpenseCreate(BaseModel):
+    category: str
+    amount: Decimal = Field(..., gt=0)
+    description: Optional[str] = None
+    expense_date: date
+
+
+class ExpenseResponse(ExpenseCreate):
+    expense_id: int
+    created_at: Optional[datetime] = None
+
+
 

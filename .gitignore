@@ -79,3 +79,7 @@ venv.bak/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Frontend dependencies
+frontend/node_modules/
+frontend/dist/

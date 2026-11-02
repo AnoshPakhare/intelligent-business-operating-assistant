@@ -1,9 +1,10 @@
 from datetime import date
 from decimal import Decimal
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from psycopg.rows import dict_row
 
 from app.database import get_connection
+from app.pdf_generator import generate_invoice_pdf
 from app.schemas import (
     CustomerCreate,
     ItemCreate,
@@ -13,7 +14,11 @@ from app.schemas import (
     InvoiceCreate,
     InvoiceResponse,
     InvoiceDetailResponse,
+    ExpenseCreate,
+    ExpenseResponse,
 )
+from app.ai.schemas import AIChatRequest, AIChatResponse
+from app.ai.agent import process_chat_request
 
 app = FastAPI(title="Intelligent Business Operating Assistant")
 
@@ -639,6 +644,23 @@ def get_invoice_detail(invoice_id: int):
             connection.close()
 
 
+@app.get("/invoices/{invoice_id}/pdf")
+def get_invoice_pdf(invoice_id: int):
+    invoice_detail = get_invoice_detail(invoice_id)
+    pdf_bytes = generate_invoice_pdf(invoice_detail)
+
+    inv_num_safe = str(invoice_detail.get("invoice_number", f"INV_{invoice_id}")).replace("/", "_").replace("\\", "_")
+    filename = f"Invoice_{inv_num_safe}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+    )
+
+
 @app.put("/invoices/{invoice_id}/cancel")
 def cancel_invoice(invoice_id: int):
     connection = None
@@ -723,6 +745,93 @@ def cancel_invoice(invoice_id: int):
     finally:
         if connection:
             connection.close()
+
+
+@app.get("/expenses", response_model=list[ExpenseResponse])
+def get_expenses():
+    connection = None
+
+    try:
+        connection = get_connection()
+
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SELECT * FROM expenses ORDER BY expense_date DESC, expense_id DESC")
+            expenses = cursor.fetchall()
+
+        return expenses
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+    finally:
+        if connection:
+            connection.close()
+
+
+@app.post("/expenses")
+def create_expense(expense: ExpenseCreate):
+    connection = None
+
+    try:
+        connection = get_connection()
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO expenses
+                (category, amount, description, expense_date)
+                VALUES (%s, %s, %s, %s)
+                RETURNING expense_id
+                """,
+                (
+                    expense.category,
+                    expense.amount,
+                    expense.description,
+                    expense.expense_date,
+                ),
+            )
+
+            expense_id = cursor.fetchone()[0]
+
+        connection.commit()
+
+        return {
+            "message": "Expense created successfully",
+            "expense_id": expense_id
+        }
+
+    except Exception as e:
+        if connection:
+            connection.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+    finally:
+        if connection:
+            connection.close()
+
+
+@app.post("/ai/chat", response_model=AIChatResponse)
+def ai_chat_endpoint(payload: AIChatRequest):
+    """
+    Main AI Assistant endpoint interfacing local Ollama (gemma3:1b)
+    with controlled PostgreSQL backend tools.
+    """
+    try:
+        return process_chat_request(payload.message)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI Agent processing error: {str(e)}"
+        )
+
+
 
 
 
