@@ -647,7 +647,25 @@ def get_invoice_detail(invoice_id: int):
 @app.get("/invoices/{invoice_id}/pdf")
 def get_invoice_pdf(invoice_id: int):
     invoice_detail = get_invoice_detail(invoice_id)
-    pdf_bytes = generate_invoice_pdf(invoice_detail)
+
+    # Retrieve business profile to pass to dynamic PDF generator
+    biz_profile = None
+    connection = None
+    try:
+        connection = get_connection()
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT business_id, business_name, owner_name, address, phone, email, gstin, invoice_prefix "
+                "FROM business LIMIT 1"
+            )
+            biz_profile = cursor.fetchone()
+    except Exception:
+        biz_profile = None
+    finally:
+        if connection:
+            connection.close()
+
+    pdf_bytes = generate_invoice_pdf(invoice_detail, business_data=biz_profile)
 
     inv_num_safe = str(invoice_detail.get("invoice_number", f"INV_{invoice_id}")).replace("/", "_").replace("\\", "_")
     filename = f"Invoice_{inv_num_safe}.pdf"

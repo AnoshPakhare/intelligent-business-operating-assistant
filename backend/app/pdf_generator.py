@@ -18,7 +18,25 @@ def format_currency(val):
     except (ValueError, TypeError):
         return f"Rs. {val}"
 
-def generate_invoice_pdf(invoice_data: dict) -> bytes:
+def fetch_business_profile() -> dict:
+    """Fetch the registered business profile from PostgreSQL database."""
+    try:
+        from app.database import get_connection
+        from psycopg.rows import dict_row
+        with get_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT business_id, business_name, owner_name, address, phone, email, gstin, invoice_prefix "
+                    "FROM business LIMIT 1"
+                )
+                row = cur.fetchone()
+                if row:
+                    return dict(row)
+    except Exception:
+        pass
+    return None
+
+def generate_invoice_pdf(invoice_data: dict, business_data: dict = None) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -178,14 +196,38 @@ def generate_invoice_pdf(invoice_data: dict) -> bytes:
         textColor=colors.HexColor('#4F46E5')
     )
 
-    # 1. Header Row (Business Details vs Invoice Heading)
+    # 1. Header Row (Dynamic Business Details vs Invoice Heading)
+    biz = business_data or invoice_data.get('business')
+    if not biz:
+        biz = fetch_business_profile()
+
+    biz_name = (biz.get('business_name') if biz else None) or "Apex Facility Solutions"
+    owner_name = biz.get('owner_name') if biz else None
+    biz_address = (biz.get('address') if biz else None) or "Andheri East, Mumbai, Maharashtra"
+    biz_phone = biz.get('phone') if biz else None
+    biz_email = biz.get('email') if biz else None
+    biz_gstin = biz.get('gstin') if biz else None
+
     business_info = [
-        Paragraph("IBOA Enterprises", company_title_style),
-        Paragraph("101 Tech Park, Commercial Hub, Sector 62", company_sub_style),
-        Paragraph("Mumbai, Maharashtra - 400001", company_sub_style),
-        Paragraph("Phone: +91 98765 43210 | Email: billing@iboa.ai", company_sub_style),
-        Paragraph("GSTIN: 27AAACI1683M1ZI", company_sub_style),
+        Paragraph(biz_name, company_title_style),
     ]
+    if owner_name:
+        business_info.append(Paragraph(f"Owner: {owner_name}", company_sub_style))
+    if biz_address:
+        business_info.append(Paragraph(biz_address, company_sub_style))
+
+    contact_parts = []
+    if biz_phone:
+        contact_parts.append(f"Phone: {biz_phone}")
+    if biz_email:
+        contact_parts.append(f"Email: {biz_email}")
+    if contact_parts:
+        business_info.append(Paragraph(" | ".join(contact_parts), company_sub_style))
+
+    if biz_gstin:
+        business_info.append(Paragraph(f"GSTIN: {biz_gstin}", company_sub_style))
+    else:
+        business_info.append(Paragraph("GSTIN: Not Provided", company_sub_style))
 
     is_cancelled = (invoice_data.get('status') == 'CANCELLED')
     
